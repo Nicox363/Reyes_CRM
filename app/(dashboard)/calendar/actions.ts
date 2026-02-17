@@ -435,6 +435,8 @@ export async function findAvailableSlots(
 ) {
     const supabase = await createClient()
 
+    const startDate = startDateStr ? new Date(startDateStr) : new Date()
+
     // 1. Get service duration
     const { data: service } = await supabase
         .from('services')
