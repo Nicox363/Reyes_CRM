@@ -37,11 +37,10 @@ export async function middleware(request: NextRequest) {
     } = await supabase.auth.getUser()
 
     const path = request.nextUrl.pathname
-    console.log(`[Middleware] Processing request for path: ${path}`)
 
     // 3. Auth Logic
     // If user is NOT logged in and trying to access protected route -> Login
-    if (!user && path !== '/login' && !path.startsWith('/auth') && !path.startsWith('/booking')) {
+    if (!user && path !== '/login' && !path.startsWith('/auth')) {
         return NextResponse.redirect(new URL('/login', request.url))
     }
 
