@@ -1,9 +1,9 @@
-import { createClient } from '@/lib/supabase/server'
+import { createServiceRoleClient } from '@/lib/supabase/service-role'
 import { sendWhatsappReminder } from '@/app/(dashboard)/calendar/actions'
 
 export async function checkAndSendReminders() {
     console.log('[Scheduler] Checking for reminders...')
-    const supabase = await createClient()
+    const supabase = createServiceRoleClient()
     const now = new Date()
 
     // 1h 45m to 2h 15m window
