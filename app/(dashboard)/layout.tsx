@@ -1,4 +1,5 @@
 import { Sidebar } from "@/components/shared/Sidebar"
+import { MobileNav } from "@/components/shared/MobileNav"
 import { createClient } from "@/lib/supabase/server"
 
 export default async function DashboardLayout({
@@ -26,9 +27,10 @@ export default async function DashboardLayout({
             <aside className="hidden md:flex">
                 <Sidebar role={role} />
             </aside>
-            <main className="flex-1 overflow-y-auto">
+            <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
                 {children}
             </main>
+            <MobileNav role={role} />
         </div>
     )
 }

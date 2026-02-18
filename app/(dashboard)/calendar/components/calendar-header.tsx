@@ -47,73 +47,80 @@ export function CalendarHeader({ currentDate, cabins }: { currentDate: Date, cab
     }
 
     return (
-        <div className="flex items-center justify-between mb-6 p-4 bg-white rounded-lg shadow-sm border">
-            <div className="flex items-center gap-4">
-                {/* Calendar Date Picker Logic (Existing) */}
-                {isMounted ? (
-                    <Popover>
-                        <PopoverTrigger asChild>
-                            <Button
-                                variant={"outline"}
-                                className={cn(
-                                    "justify-start text-left font-normal",
-                                    !currentDate && "text-muted-foreground"
-                                )}
-                            >
-                                <CalendarIcon className="mr-2 h-4 w-4" />
-                                <span className="text-lg font-bold capitalize text-gray-800">
-                                    {format(currentDate, "EEEE, d 'de' MMMM", { locale: es })}
-                                </span>
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar
-                                mode="single"
-                                selected={currentDate}
-                                onSelect={handleDateSelect}
-                                initialFocus
-                                locale={es}
-                            />
-                        </PopoverContent>
-                    </Popover>
-                ) : (
-                    <Button
-                        variant={"outline"}
-                        className={cn(
-                            "justify-start text-left font-normal",
-                            !currentDate && "text-muted-foreground"
-                        )}
-                    >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        <span className="text-lg font-bold capitalize text-gray-800">
-                            {format(currentDate, "EEEE, d 'de' MMMM", { locale: es })}
-                        </span>
-                    </Button>
-                )}
+        <div className="flex flex-col gap-3 mb-6 p-3 md:p-4 bg-white rounded-lg shadow-sm border">
+            {/* Top row: Date + Navigation arrows */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 md:gap-4 min-w-0">
+                    {/* Calendar Date Picker Logic (Existing) */}
+                    {isMounted ? (
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant={"outline"}
+                                    className={cn(
+                                        "justify-start text-left font-normal px-2 md:px-4",
+                                        !currentDate && "text-muted-foreground"
+                                    )}
+                                >
+                                    <CalendarIcon className="mr-1 md:mr-2 h-4 w-4 shrink-0" />
+                                    <span className="text-sm md:text-lg font-bold capitalize text-gray-800 truncate">
+                                        {format(currentDate, "EEE d MMM", { locale: es })}
+                                    </span>
+                                    <span className="hidden md:inline text-sm md:text-lg font-bold capitalize text-gray-800">
+                                        {format(currentDate, "yyyy")}
+                                    </span>
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                    mode="single"
+                                    selected={currentDate}
+                                    onSelect={handleDateSelect}
+                                    initialFocus
+                                    locale={es}
+                                />
+                            </PopoverContent>
+                        </Popover>
+                    ) : (
+                        <Button
+                            variant={"outline"}
+                            className={cn(
+                                "justify-start text-left font-normal px-2 md:px-4",
+                                !currentDate && "text-muted-foreground"
+                            )}
+                        >
+                            <CalendarIcon className="mr-1 md:mr-2 h-4 w-4 shrink-0" />
+                            <span className="text-sm md:text-lg font-bold capitalize text-gray-800 truncate">
+                                {format(currentDate, "EEE d MMM", { locale: es })}
+                            </span>
+                        </Button>
+                    )}
+                </div>
 
-                <span className="text-gray-500 text-sm font-medium">
-                    {format(currentDate, "yyyy")}
-                </span>
+                {/* Nav arrows + Today */}
+                <div className="flex items-center gap-1 md:gap-2 shrink-0">
+                    <Button variant="outline" size="sm" onClick={handleToday} className="text-xs md:text-sm px-2 md:px-3">
+                        Hoy
+                    </Button>
+                    <div className="flex items-center rounded-md border bg-white">
+                        <Button variant="ghost" size="icon" onClick={handlePrev} className="h-8 w-8 md:h-9 md:w-9">
+                            <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <div className="w-[1px] h-5 md:h-6 bg-gray-200" />
+                        <Button variant="ghost" size="icon" onClick={handleNext} className="h-8 w-8 md:h-9 md:w-9">
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                    </div>
+                </div>
             </div>
 
+            {/* Bottom row: Action buttons */}
             <div className="flex items-center gap-2">
                 <SlotFinder />
-                <Button onClick={() => setShowNewAppointmentModal(true)} className="mr-2">
-                    <Plus className="h-4 w-4 mr-2" /> Nueva Cita
+                <Button onClick={() => setShowNewAppointmentModal(true)} size="sm" className="md:mr-2">
+                    <Plus className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">Nueva Cita</span>
                 </Button>
-
-                <Button variant="outline" size="sm" onClick={handleToday}>
-                    Hoy
-                </Button>
-                <div className="flex items-center rounded-md border bg-white">
-                    <Button variant="ghost" size="icon" onClick={handlePrev}>
-                        <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <div className="w-[1px] h-6 bg-gray-200" />
-                    <Button variant="ghost" size="icon" onClick={handleNext}>
-                        <ChevronRight className="h-4 w-4" />
-                    </Button>
-                </div>
             </div>
 
             <NewAppointmentModal
