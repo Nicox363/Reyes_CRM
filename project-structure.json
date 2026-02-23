@@ -1,0 +1,507 @@
+{
+    "project": {
+        "name": "DelosBeautyManager (Reyes CRM)",
+        "description": "Sistema de gestión integral (CRM + TPV + Agenda) para un centro de estética y belleza. Gestiona citas, clientes, empleados, inventario, facturación, informes y reservas online.",
+        "language": "TypeScript",
+        "repository": "https://github.com/Nicox363/Reyes_CRM",
+        "deployment": {
+            "platform": "Hostinger VPS",
+            "ip": "193.203.190.234",
+            "port": 3000,
+            "docker": true,
+            "url": "http://193.203.190.234:3000"
+        }
+    },
+    "tech_stack": {
+        "framework": "Next.js 16.1.6 (App Router)",
+        "react": "React 19.2.3",
+        "language": "TypeScript 5.x",
+        "styling": "Tailwind CSS 3.4.19 + tailwindcss-animate",
+        "ui_library": "shadcn/ui (Radix UI primitives + CVA + lucide-react icons)",
+        "database": "Supabase (PostgreSQL) hosted",
+        "supabase_project_id": "sqxgzpkutzhyzdnlmchc",
+        "auth": "Supabase Auth (email/password, managed via @supabase/ssr)",
+        "charts": "Recharts 3.7.0",
+        "pdf": "jsPDF 4.1.0 + jspdf-autotable 5.0.7",
+        "whatsapp": "Twilio (whatsapp sandbox)",
+        "forms": "react-hook-form 7.x + zod 4.x validation",
+        "date_library": "date-fns 4.1.0",
+        "state_management": "React Server Components + Server Actions (no Redux/Zustand)",
+        "images": "Supabase Storage (bucket: client-photos)",
+        "cron": "node-cron 4.x (via Next.js instrumentation.ts)",
+        "containerization": "Docker (Dockerfile + docker-compose.yml)"
+    },
+    "environment_variables": {
+        "NEXT_PUBLIC_SUPABASE_URL": "Supabase project URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY": "Supabase anon/public key",
+        "SUPABASE_SERVICE_ROLE_KEY": "Supabase service role key (server-only, used in cron jobs)",
+        "NEXT_PUBLIC_APP_URL": "App URL (http://IP:3000 or domain)",
+        "TWILIO_ACCOUNT_SID": "Twilio Account SID for WhatsApp reminders",
+        "TWILIO_AUTH_TOKEN": "Twilio Auth Token",
+        "TWILIO_WHATSAPP_NUMBER": "Twilio WhatsApp sender number (whatsapp:+XXXXX)"
+    },
+    "architecture": {
+        "pattern": "Next.js App Router with Server Components and Server Actions",
+        "data_flow": "Page (Server Component) → Server Actions (lib/actions.ts) → Supabase Client → PostgreSQL",
+        "auth_flow": "middleware.ts intercepts all requests → checks Supabase session → redirects to /login if unauthenticated",
+        "role_system": {
+            "roles": [
+                "admin",
+                "staff"
+            ],
+            "stored_in": "profiles.role (PostgreSQL enum: user_role)",
+            "enforced_by": [
+                "middleware.ts (route protection)",
+                "layout.tsx (sidebar filtering)",
+                "RLS policies (row-level security in Supabase)"
+            ]
+        },
+        "supabase_clients": {
+            "client_side": "lib/supabase/client.ts — createBrowserClient() for client components",
+            "server_side": "lib/supabase/server.ts — createServerClient() with cookie handling for Server Components and Server Actions",
+            "service_role": "lib/supabase/service-role.ts — createClient() with SUPABASE_SERVICE_ROLE_KEY, bypasses RLS, used in cron jobs"
+        },
+        "cron_jobs": {
+            "setup": "instrumentation.ts registers a node-cron job when NEXT_RUNTIME === 'nodejs'",
+            "frequency": "Every 15 minutes",
+            "function": "lib/scheduler.ts → checkAndSendReminders()",
+            "purpose": "Sends WhatsApp reminders via Twilio for appointments starting in ~2 hours"
+        }
+    },
+    "routing": {
+        "root_layout": "app/layout.tsx — HTML root, global CSS, metadata",
+        "root_page": "app/page.tsx — Landing/splash page (public)",
+        "auth_group": {
+            "path": "app/(auth)/",
+            "routes": {
+                "/login": "Login page with email/password form → Supabase Auth"
+            }
+        },
+        "dashboard_group": {
+            "path": "app/(dashboard)/",
+            "layout": "app/(dashboard)/layout.tsx — Sidebar (desktop) + MobileNav (mobile) + role fetching",
+            "routes": {
+                "/": "Dashboard — KPI cards (Caja Hoy, Citas Hoy, Alertas Stock, Cumpleaños) + Agenda del día + Alertas",
+                "/calendar": "Agenda — Grid diario por cabinas con citas, arrastrar, click para crear, estados, indicador hora actual",
+                "/clients": "Gestión de Clientes — Tabla con búsqueda, ficha 360°, historial, fotos, puntos fidelización, banderas",
+                "/clients/[id]": "Ficha individual del cliente — Historial de citas, galería fotos, notas, puntos",
+                "/inventory": "Inventario — CRUD productos con stock, alertas de bajo stock, precios coste/venta",
+                "/finance": "Caja/TPV — Resumen diario, transacciones, gastos, proveedores, gastos recurrentes, venta productos, gráficos",
+                "/finance/vouchers": "Gestión de bonos — Definición de bonos, venta a clientes, consumo de sesiones",
+                "/finance/expenses": "Sub-sección de gastos",
+                "/schedule": "Horarios del Personal — Calendario semanal de turnos, patrones, rotaciones A/B, gestión de empleados",
+                "/settings": "Configuración — Ajustes generales, programa fidelización, servicios",
+                "/reports": "Dashboard de Informes — Hub con acceso a todos los sub-informes",
+                "/reports/sales": "Ventas generales",
+                "/reports/sales/services": "Ventas por servicio",
+                "/reports/sales/products": "Ventas por producto",
+                "/reports/sales/channels": "Ventas por canal (método de pago)",
+                "/reports/finance/monthly": "Informe financiero mensual",
+                "/reports/finance/annual": "Informe financiero anual",
+                "/reports/finance/taxes": "Informe de IVA/impuestos",
+                "/reports/lists/appointments": "Lista de reservas",
+                "/reports/lists/transactions": "Lista de transacciones",
+                "/reports/lists/cancellations": "Lista de cancelaciones",
+                "/reports/clients/acquisition": "Captación de clientes",
+                "/reports/clients/retention": "Retención de clientes",
+                "/reports/staff": "Rendimiento del equipo",
+                "/reports/staff/performance": "Rendimiento individual"
+            }
+        },
+        "public_routes": {
+            "/booking": "Portal de reservas online público (sin auth) — Wizard: Servicio → Fecha → Datos → Confirmación"
+        },
+        "api_routes": {
+            "/api/cron/send-reminders": "Endpoint CRON para enviar recordatorios WhatsApp (Twilio)",
+            "/api/webhooks/whatsapp-response": "Webhook para recibir respuestas de WhatsApp (confirmar/cancelar cita)"
+        }
+    },
+    "middleware": {
+        "file": "middleware.ts",
+        "purpose": "Auth guard + session refresh",
+        "logic": [
+            "Creates Supabase server client with cookie handling",
+            "Gets current user session",
+            "If NOT logged in and NOT on /login or /auth or /booking → redirect to /login",
+            "If logged in and on /login → redirect to /calendar",
+            "If logged in and on / → redirect to /calendar"
+        ],
+        "excluded_paths": [
+            "/_next/static",
+            "/_next/image",
+            "/favicon.ico",
+            "static assets (svg, png, jpg, etc.)"
+        ],
+        "note": "The /booking route is excluded from auth protection to allow public access"
+    },
+    "components": {
+        "shared": {
+            "Sidebar.tsx": "Desktop sidebar navigation (hidden on mobile via md:flex). Links: Agenda, Horario, Clientes, Inventario, Caja, Informes, Config. Filters by role (admin sees all, staff sees subset). Logout button.",
+            "MobileNav.tsx": "Bottom navigation bar for mobile (md:hidden). Shows 4 main items + 'Más' button that opens slide-up panel with secondary nav + logout.",
+            "ExportButton.tsx": "Reusable PDF/CSV export button used across report pages"
+        },
+        "calendar": {
+            "calendar-header.tsx": "Date picker, navigation arrows (prev/next day), 'Hoy' button, 'Nueva Cita' button, SlotFinder. Responsive layout.",
+            "calendar-grid.tsx": "Main agenda grid. Columns = cabins (4), Rows = hours (10:00-20:00). Appointments rendered as positioned blocks with color-coding by staff. Context menu for quick status changes. Current time indicator (red line). Auto-scroll to current hour.",
+            "new-appointment-modal.tsx": "Modal for creating a new appointment. Client search (autocomplete), service picker, date/time picker, cabin/staff assignment.",
+            "appointment-details-modal.tsx": "Modal for viewing/editing existing appointment. Status changes, payment processing, notes, WhatsApp reminder button.",
+            "slot-finder.tsx": "Dialog to search for available time slots. Filters: service, staff, date range. Returns list of open gaps."
+        },
+        "schedule": {
+            "staff-manager.tsx": "CRUD for staff members (create, edit name/color/email, delete). Admin only.",
+            "schedule-modal.tsx": "Modal for editing individual shift entries (date, start_time, end_time, is_working_day, note).",
+            "pattern-manager.tsx": "CRUD for shift patterns (Mañana, Tarde, Partido). Each pattern has start/end times and optional break.",
+            "apply-pattern-dialog.tsx": "Dialog to apply a shift pattern to a date range for selected staff members.",
+            "rotation-manager.tsx": "Configure A/B week rotation rules per staff member. Picks Pattern A, Pattern B, start date, and working days.",
+            "week-picker.tsx": "Date navigator to jump between weeks in the schedule view."
+        },
+        "finance": {
+            "financial-charts.tsx": "Recharts line/bar charts for income evolution (30 days) and income distribution (services vs products).",
+            "product-sale-modal.tsx": "Modal for selling products from inventory. Multi-item cart, stock deduction, payment method selection, receipt generation."
+        },
+        "clients": {
+            "new-client-modal.tsx": "Quick client creation modal (name, phone, email, birth_date, notes)."
+        },
+        "ui": "Standard shadcn/ui components: Button, Input, Label, Select, Dialog, Popover, Tabs, Card, Switch, Checkbox, Avatar, ContextMenu, DropdownMenu, Command (cmdk search)."
+    },
+    "server_actions": {
+        "description": "All data mutations go through Server Actions (use server functions). No REST API endpoints except webhooks/cron.",
+        "files": {
+            "app/(dashboard)/calendar/actions.ts": "CRUD appointments, fetch by date, update status, get cabins, send WhatsApp reminder, find available slots",
+            "app/(dashboard)/clients/actions.ts": "CRUD clients, search, fetch with history",
+            "app/(dashboard)/clients/loyalty-actions.ts": "Add/redeem loyalty points, get transaction history, get/update config",
+            "app/(dashboard)/clients/waitlist-actions.ts": "CRUD waitlist entries",
+            "app/(dashboard)/finance/actions.ts": "Finance summary, CRUD transactions/expenses, suppliers, recurring expenses, generate recurring, charts data",
+            "app/(dashboard)/inventory/actions.ts": "CRUD products, stock alerts",
+            "app/(dashboard)/schedule/actions.ts": "CRUD shifts, shift patterns, rotation rules, copy/paste weeks, generate from rotation",
+            "app/(dashboard)/settings/actions.ts": "Update settings, services CRUD",
+            "app/(dashboard)/reports/actions.ts": "All report queries: sales by service/product/channel/staff, monthly/annual finance, tax summaries, client acquisition/retention, appointment/transaction/cancellation lists"
+        }
+    },
+    "database_schema": {
+        "provider": "Supabase (PostgreSQL)",
+        "rls_enabled_on_all_tables": true,
+        "custom_enums": {
+            "user_role": [
+                "admin",
+                "staff"
+            ],
+            "appointment_status": [
+                "pending",
+                "confirmed",
+                "cancelled",
+                "paid",
+                "no_show"
+            ],
+            "payment_method": [
+                "cash",
+                "card",
+                "bizum",
+                "voucher"
+            ]
+        },
+        "tables": {
+            "profiles": {
+                "description": "User profiles linked to auth.users. Stores role, display name, and color.",
+                "columns": [
+                    "id (uuid, FK→auth.users)",
+                    "role (user_role, default 'staff')",
+                    "name (text)",
+                    "color (text, hex)",
+                    "created_at"
+                ],
+                "rows": 7
+            },
+            "cabins": {
+                "description": "Treatment rooms/cabins. Each appointment is assigned to a cabin.",
+                "columns": [
+                    "id (uuid)",
+                    "name (text)",
+                    "created_at"
+                ],
+                "rows": 4
+            },
+            "services": {
+                "description": "Catalogue of services offered (name, duration in minutes, price, category).",
+                "columns": [
+                    "id (uuid)",
+                    "name (text)",
+                    "duration (int, minutes)",
+                    "price (numeric)",
+                    "category (text)",
+                    "created_at"
+                ],
+                "rows": 66
+            },
+            "clients": {
+                "description": "Client database with loyalty points and conflict flag.",
+                "columns": [
+                    "id (uuid)",
+                    "full_name (text)",
+                    "phone (text?)",
+                    "email (text?)",
+                    "notes (text?)",
+                    "is_conflictive (bool, default false)",
+                    "loyalty_points (int, default 0)",
+                    "birth_date (date?)",
+                    "created_at"
+                ],
+                "rows": 1078
+            },
+            "appointments": {
+                "description": "Core appointment table. Links client, service, staff, and cabin. Tracks status and reminder.",
+                "columns": [
+                    "id (uuid)",
+                    "start_time (timestamptz)",
+                    "end_time (timestamptz)",
+                    "status (appointment_status)",
+                    "cabin_id (FK→cabins)",
+                    "staff_id (FK→profiles)",
+                    "client_id (FK→clients)",
+                    "service_id (FK→services)",
+                    "notes (text?)",
+                    "reminder_sent_at (timestamptz?)",
+                    "created_at"
+                ],
+                "rows": 15,
+                "notes": "Overlap prevention is enforced at the application layer (not DB constraint)"
+            },
+            "transactions": {
+                "description": "Payment records. Can be linked to an appointment or be standalone (product sale, manual entry).",
+                "columns": [
+                    "id (uuid)",
+                    "date (timestamptz)",
+                    "amount (numeric)",
+                    "method (payment_method)",
+                    "concept (text?)",
+                    "appointment_id (FK→appointments?)",
+                    "client_id (FK→clients?)",
+                    "created_by (FK→profiles?)",
+                    "discount (numeric, default 0)",
+                    "notes (text?)"
+                ],
+                "rows": 17
+            },
+            "expenses": {
+                "description": "Business expenses (rent, salaries, materials, etc.).",
+                "columns": [
+                    "id (uuid)",
+                    "concept (text)",
+                    "amount (numeric)",
+                    "date (date)",
+                    "category (text?)",
+                    "notes (text?)",
+                    "supplier_id (FK→suppliers?)",
+                    "created_by (FK→profiles?)",
+                    "created_at"
+                ],
+                "rows": 9
+            },
+            "inventory": {
+                "description": "Product inventory with stock tracking and alerts.",
+                "columns": [
+                    "id (uuid)",
+                    "name (text)",
+                    "stock_quantity (int, default 0)",
+                    "min_stock_threshold (int, default 2)",
+                    "price (numeric?)",
+                    "cost (numeric?)",
+                    "created_at"
+                ],
+                "rows": 162
+            },
+            "suppliers": {
+                "description": "Supplier/vendor database linked to expenses.",
+                "columns": [
+                    "id (uuid)",
+                    "name (text)",
+                    "contact_info (text?)",
+                    "category (text?)",
+                    "notes (text?)",
+                    "created_at"
+                ],
+                "rows": 5
+            },
+            "recurring_expenses": {
+                "description": "Recurring expense templates that auto-generate monthly.",
+                "columns": [
+                    "id (uuid)",
+                    "concept (text)",
+                    "amount (numeric)",
+                    "supplier_id (FK→suppliers?)",
+                    "category (text)",
+                    "day_of_month (int)",
+                    "active (bool)",
+                    "last_generated_date (date?)",
+                    "created_at"
+                ],
+                "rows": 7
+            },
+            "staff_schedules": {
+                "description": "Daily shift entries for each staff member.",
+                "columns": [
+                    "id (uuid)",
+                    "staff_id (FK→profiles)",
+                    "date (date)",
+                    "start_time (time)",
+                    "end_time (time)",
+                    "is_working_day (bool)",
+                    "note (text?)",
+                    "created_at"
+                ],
+                "rows": 60
+            },
+            "shift_patterns": {
+                "description": "Reusable shift templates (Mañana, Tarde, Partido) with optional break.",
+                "columns": [
+                    "id (uuid)",
+                    "name (text)",
+                    "start_time (time)",
+                    "end_time (time)",
+                    "break_start (time?)",
+                    "break_end (time?)",
+                    "color (text?)",
+                    "created_at"
+                ],
+                "rows": 3
+            },
+            "rotation_rules": {
+                "description": "A/B week rotation configuration per staff member.",
+                "columns": [
+                    "id (uuid)",
+                    "staff_id (FK→profiles, unique)",
+                    "pattern_a_id (FK→shift_patterns)",
+                    "pattern_b_id (FK→shift_patterns)",
+                    "start_date (date)",
+                    "days_of_week (int[])",
+                    "active (bool)",
+                    "created_at"
+                ],
+                "rows": 7
+            },
+            "voucher_definitions": {
+                "description": "Session-based voucher/bonus packages (e.g., '10 laser sessions').",
+                "columns": [
+                    "id (uuid)",
+                    "name (text)",
+                    "sessions (int)",
+                    "price (numeric)",
+                    "service_id (FK→services?)",
+                    "created_at"
+                ],
+                "rows": 0
+            },
+            "client_vouchers": {
+                "description": "Vouchers purchased by clients, tracking remaining sessions.",
+                "columns": [
+                    "id (uuid)",
+                    "client_id (FK→clients)",
+                    "definition_id (FK→voucher_definitions)",
+                    "sessions_total (int)",
+                    "sessions_remaining (int)",
+                    "purchase_date",
+                    "expiry_date?",
+                    "transaction_id (FK→transactions?)",
+                    "created_at"
+                ],
+                "rows": 0
+            },
+            "loyalty_config": {
+                "description": "Global loyalty program configuration (singleton table).",
+                "columns": [
+                    "id (uuid)",
+                    "points_per_euro (int, default 1)",
+                    "points_per_visit (int, default 10)",
+                    "redemption_value (numeric, default 0.10)",
+                    "min_redemption (int, default 100)",
+                    "active (bool)"
+                ],
+                "rows": 1
+            },
+            "loyalty_transactions": {
+                "description": "Loyalty points history per client.",
+                "columns": [
+                    "id (uuid)",
+                    "client_id (FK→clients)",
+                    "points (int)",
+                    "reason (text)",
+                    "appointment_id (FK→appointments?)",
+                    "created_at"
+                ],
+                "rows": 0
+            },
+            "waitlist": {
+                "description": "Waiting list for clients wanting appointments when full.",
+                "columns": [
+                    "id (uuid)",
+                    "client_name (text)",
+                    "phone (text?)",
+                    "service_requested (text?)",
+                    "notes (text?)",
+                    "priority (text, default 'normal')",
+                    "status (text, default 'waiting')",
+                    "created_at"
+                ],
+                "rows": 0
+            }
+        },
+        "storage_buckets": {
+            "client-photos": "Before/after photos of clients. Public read, authenticated write. Accessed via Supabase Storage URL."
+        }
+    },
+    "key_files": {
+        "middleware.ts": "Auth guard — redirects unauthenticated users to /login. Excludes /booking, /api, and static assets.",
+        "instrumentation.ts": "Registers node-cron job (every 15 min) for WhatsApp reminder check on server startup.",
+        "next.config.ts": "standalone output mode for Docker, remote image patterns for Supabase Storage.",
+        "lib/scheduler.ts": "checkAndSendReminders() — queries upcoming appointments within 2 hours, sends WhatsApp via Twilio, marks reminder_sent_at.",
+        "lib/pdf-generator.ts": "Generates PDF tickets/invoices using jsPDF + autoTable.",
+        "lib/supabase/server.ts": "Creates Supabase server client with Next.js cookie handling for SSR.",
+        "lib/supabase/client.ts": "Creates Supabase browser client for client components.",
+        "lib/supabase/service-role.ts": "Creates Supabase client with service_role key (bypasses RLS) for cron jobs.",
+        "Dockerfile": "Multi-stage build: deps → builder → runner. Uses node:20-alpine. Standalone output.",
+        "docker-compose.yml": "Single service: reyes-crm on port 3000. Uses .env.local for environment."
+    },
+    "business_logic": {
+        "calendar": {
+            "hours": "10:00 to 20:00 (10 hour work day)",
+            "cabins": 4,
+            "overlap_prevention": "Checks for conflicting appointments in same cabin at application layer before insert",
+            "statuses": [
+                "pending → confirmed → paid",
+                "pending → cancelled",
+                "pending → no_show"
+            ],
+            "color_coding": "Each staff member has a hex color in profiles.color. Appointments are rendered in pastel version of staff color."
+        },
+        "finance": {
+            "payment_methods": [
+                "cash",
+                "card",
+                "bizum",
+                "voucher"
+            ],
+            "daily_summary": "Groups transactions by payment method for daily cash register close",
+            "recurring_expenses": "Auto-generates on day_of_month if not already generated that month"
+        },
+        "loyalty": {
+            "earn": "points_per_euro × amount + points_per_visit per completed appointment",
+            "redeem": "min_redemption points required, each point worth redemption_value euros",
+            "configurable": "Admin can toggle on/off and change all rates from Settings"
+        },
+        "whatsapp_reminders": {
+            "trigger": "Cron every 15 min checks appointments starting in 1.5-2.5 hours",
+            "message": "Reminder with date, time, service. Client can reply 'CONFIRMAR' or 'CANCELAR'",
+            "webhook": "POST /api/webhooks/whatsapp-response updates appointment status based on client's reply"
+        }
+    },
+    "conventions": {
+        "file_naming": "kebab-case for files, PascalCase for components",
+        "data_fetching": "Server Actions (use server) in actions.ts files per route group. No REST API.",
+        "styling": "Tailwind CSS utility classes. shadcn/ui for pre-built components. No custom CSS files except globals.css.",
+        "icons": "lucide-react icon library throughout",
+        "date_handling": "date-fns with Spanish locale (es) for all formatting",
+        "forms": "react-hook-form + zod for validation in complex forms, native form state for simple ones",
+        "error_handling": "try/catch in Server Actions, errors returned as { error: string } objects",
+        "responsive": "Mobile-first with Tailwind breakpoints: sm (640px), md (768px), lg (1024px). Mobile bottom nav at md:hidden, sidebar at md:flex."
+    }
+}

@@ -2,7 +2,42 @@
 
 import { createClient } from '@/lib/supabase/server'
 
-// Public actions — no auth required
+// ============================================
+// TIMEZONE HELPER
+// ============================================
+const TIMEZONE = 'Europe/Madrid'
+
+function getNowInTimezone(): Date {
+    // Returns current date/time adjusted to Europe/Madrid
+    const now = new Date()
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TIMEZONE,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+    })
+    const parts = formatter.formatToParts(now)
+    const get = (type: string) => parts.find(p => p.type === type)?.value || '0'
+    return new Date(
+        parseInt(get('year')),
+        parseInt(get('month')) - 1,
+        parseInt(get('day')),
+        parseInt(get('hour')),
+        parseInt(get('minute'))
+    )
+}
+
+function getTodayStr(): string {
+    const now = new Date()
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TIMEZONE,
+        year: 'numeric', month: '2-digit', day: '2-digit'
+    })
+    return formatter.format(now) // "YYYY-MM-DD"
+}
+
+// ============================================
+// PUBLIC ACTIONS — No auth required
+// ============================================
 
 export async function getPublicServices() {
     const supabase = await createClient()
@@ -39,6 +74,10 @@ export async function getPublicCabins() {
     return data || []
 }
 
+// ============================================
+// GET AVAILABLE SLOTS — Uses real staff schedules
+// ============================================
+
 export async function getAvailableSlots(serviceId: string, staffId: string, dateStr: string) {
     const supabase = await createClient()
 
@@ -51,7 +90,45 @@ export async function getAvailableSlots(serviceId: string, staffId: string, date
 
     const duration = service?.duration || 30
 
-    // 2. Get existing appointments for this staff on this date
+    // 2. Get staff schedule for this date
+    const { data: schedule } = await supabase
+        .from('staff_schedules')
+        .select('*')
+        .eq('staff_id', staffId)
+        .eq('date', dateStr)
+        .single()
+
+    // Determine working hours from schedule
+    let businessStartMin: number
+    let businessEndMin: number
+
+    if (schedule) {
+        // Staff has a schedule for this day
+        if (!schedule.is_working_day) {
+            return [] // Staff doesn't work this day → no slots
+        }
+        const [sh, sm] = schedule.start_time.split(':').map(Number)
+        const [eh, em] = schedule.end_time.split(':').map(Number)
+        businessStartMin = sh * 60 + sm
+        businessEndMin = eh * 60 + em
+    } else {
+        // No schedule record — check if staff uses scheduler at all
+        const { count } = await supabase
+            .from('staff_schedules')
+            .select('*', { count: 'exact', head: true })
+            .eq('staff_id', staffId)
+
+        if (count && count > 0) {
+            // Staff uses scheduler but has no schedule for this day → not working
+            return []
+        }
+
+        // Staff doesn't use scheduler at all → fallback to default hours
+        businessStartMin = 9 * 60   // 09:00
+        businessEndMin = 20 * 60    // 20:00
+    }
+
+    // 3. Get existing appointments for this staff on this date
     const dayStart = `${dateStr}T00:00:00`
     const dayEnd = `${dateStr}T23:59:59`
 
@@ -64,7 +141,7 @@ export async function getAvailableSlots(serviceId: string, staffId: string, date
         .neq('status', 'cancelled')
         .order('start_time')
 
-    // 3. Build busy intervals in minutes
+    // 4. Build busy intervals in minutes
     const busy: { start: number; end: number }[] = (appts || []).map(a => {
         const s = new Date(a.start_time)
         const e = new Date(a.end_time)
@@ -73,13 +150,10 @@ export async function getAvailableSlots(serviceId: string, staffId: string, date
 
     busy.sort((a, b) => a.start - b.start)
 
-    // 4. Generate available 15-min slots from 9:00 to 20:00
-    const BUSINESS_START = 9 * 60
-    const BUSINESS_END = 20 * 60
+    // 5. Generate available 15-min slots within staff schedule
     const slots: string[] = []
 
-    for (let t = BUSINESS_START; t + duration <= BUSINESS_END; t += 15) {
-        // Check no overlap with busy intervals
+    for (let t = businessStartMin; t + duration <= businessEndMin; t += 15) {
         const slotEnd = t + duration
         const conflict = busy.some(b => t < b.end && slotEnd > b.start)
         if (!conflict) {
@@ -89,11 +163,11 @@ export async function getAvailableSlots(serviceId: string, staffId: string, date
         }
     }
 
-    // If today, filter out past times
-    const today = new Date().toISOString().split('T')[0]
+    // 6. If today (in Europe/Madrid timezone), filter out past times
+    const today = getTodayStr()
     if (dateStr === today) {
-        const now = new Date()
-        const nowMin = now.getHours() * 60 + now.getMinutes() + 30 // 30min buffer
+        const nowLocal = getNowInTimezone()
+        const nowMin = nowLocal.getHours() * 60 + nowLocal.getMinutes() + 30 // 30min buffer
         return slots.filter(s => {
             const [h, m] = s.split(':').map(Number)
             return h * 60 + m >= nowMin
@@ -102,6 +176,10 @@ export async function getAvailableSlots(serviceId: string, staffId: string, date
 
     return slots
 }
+
+// ============================================
+// CREATE PUBLIC BOOKING — With validation
+// ============================================
 
 export async function createPublicBooking(data: {
     service_id: string
@@ -132,7 +210,68 @@ export async function createPublicBooking(data: {
     const endM = endMin % 60
     const endTime = `${data.date}T${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}:00`
 
-    // 3. Find or create client
+    // 3. Validate: check staff schedule
+    const { data: schedule } = await supabase
+        .from('staff_schedules')
+        .select('*')
+        .eq('staff_id', data.staff_id)
+        .eq('date', data.date)
+        .single()
+
+    if (schedule) {
+        if (!schedule.is_working_day) {
+            return { error: 'El empleado no trabaja este día.' }
+        }
+        const schedStart = schedule.start_time.substring(0, 5)
+        const schedEnd = schedule.end_time.substring(0, 5)
+        const apptStart = data.time
+        const apptEnd = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`
+        if (apptStart < schedStart || apptEnd > schedEnd) {
+            return { error: `Fuera de horario laboral (${schedStart} - ${schedEnd})` }
+        }
+    }
+
+    // 4. Validate: check staff overlap
+    const { data: staffConflicts } = await supabase
+        .from('appointments')
+        .select('id')
+        .eq('staff_id', data.staff_id)
+        .neq('status', 'cancelled')
+        .lt('start_time', endTime)
+        .gt('end_time', startTime)
+
+    if (staffConflicts && staffConflicts.length > 0) {
+        return { error: 'Este horario ya está ocupado para el empleado seleccionado.' }
+    }
+
+    // 5. Find a FREE cabin (not just the first one)
+    const { data: allCabins } = await supabase
+        .from('cabins')
+        .select('id')
+        .order('name')
+
+    let freeCabinId: string | null = null
+
+    for (const cabin of (allCabins || [])) {
+        const { data: cabinConflicts } = await supabase
+            .from('appointments')
+            .select('id')
+            .eq('cabin_id', cabin.id)
+            .neq('status', 'cancelled')
+            .lt('start_time', endTime)
+            .gt('end_time', startTime)
+
+        if (!cabinConflicts || cabinConflicts.length === 0) {
+            freeCabinId = cabin.id
+            break
+        }
+    }
+
+    if (!freeCabinId) {
+        return { error: 'No hay cabinas disponibles en este horario.' }
+    }
+
+    // 6. Find or create client
     let clientId: string | null = null
     const { data: existingClient } = await supabase
         .from('clients')
@@ -158,16 +297,12 @@ export async function createPublicBooking(data: {
         clientId = newClient?.id
     }
 
-    // 4. Get first cabin available
-    const { data: cabins } = await supabase.from('cabins').select('id').limit(1)
-    const cabinId = cabins?.[0]?.id
-
-    // 5. Create appointment
+    // 7. Create appointment (only allowed fields)
     const { error: aptErr } = await supabase.from('appointments').insert({
         service_id: data.service_id,
         staff_id: data.staff_id,
         client_id: clientId,
-        cabin_id: cabinId,
+        cabin_id: freeCabinId,
         start_time: startTime,
         end_time: endTime,
         status: 'pending',

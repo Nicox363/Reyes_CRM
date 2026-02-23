@@ -135,7 +135,18 @@ export async function searchClients(query: string) {
 }
 
 
-export async function createAppointment(data: any) {
+interface CreateAppointmentData {
+    service_id: string
+    staff_id: string
+    client_id: string
+    cabin_id: string
+    start_time: string
+    end_time: string
+    status?: string
+    notes?: string
+}
+
+export async function createAppointment(data: CreateAppointmentData) {
     const supabase = await createClient()
 
     // Ensure service_id is present
@@ -151,7 +162,19 @@ export async function createAppointment(data: any) {
         }
     }
 
-    const { error } = await supabase.from('appointments').insert(data)
+    // Only insert whitelisted fields — prevents arbitrary field injection
+    const safeData = {
+        service_id: data.service_id,
+        staff_id: data.staff_id,
+        client_id: data.client_id,
+        cabin_id: data.cabin_id,
+        start_time: data.start_time,
+        end_time: data.end_time,
+        status: data.status || 'pending',
+        notes: data.notes || null,
+    }
+
+    const { error } = await supabase.from('appointments').insert(safeData)
 
     if (error) {
         console.error('Error creating appointment:', error)
