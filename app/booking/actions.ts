@@ -178,8 +178,60 @@ export async function getAvailableSlots(serviceId: string, staffId: string, date
 }
 
 // ============================================
-// CREATE PUBLIC BOOKING — With validation
+// CREATE PUBLIC BOOKING — With validation + products + loyalty
 // ============================================
+
+export async function getPublicProducts() {
+    const supabase = await createClient()
+    const { data, error } = await supabase
+        .from('inventory')
+        .select('id, name, price, stock_quantity')
+        .gt('stock_quantity', 0)
+        .gt('price', 0)
+        .order('name')
+
+    if (error) return []
+    return data || []
+}
+
+export async function getClientLoyaltyPublic(phone: string) {
+    const supabase = await createClient()
+    // Find client by phone
+    const { data: client } = await supabase
+        .from('clients')
+        .select('id, loyalty_points, full_name')
+        .eq('phone', phone)
+        .limit(1)
+        .single()
+
+    if (!client || !client.loyalty_points || client.loyalty_points <= 0) {
+        return { found: false, points: 0, discount: 0 }
+    }
+
+    // Get config
+    const { data: config } = await supabase
+        .from('loyalty_config')
+        .select('*')
+        .limit(1)
+        .single()
+
+    if (!config || !config.active) {
+        return { found: false, points: 0, discount: 0 }
+    }
+
+    const maxDiscount = (client.loyalty_points * Number(config.redemption_value))
+    const canRedeem = client.loyalty_points >= (config.min_redemption || 0)
+
+    return {
+        found: true,
+        clientName: client.full_name,
+        points: client.loyalty_points,
+        discount: canRedeem ? Math.floor(maxDiscount * 100) / 100 : 0,
+        canRedeem,
+        minRedemption: config.min_redemption || 0,
+        redemptionValue: Number(config.redemption_value)
+    }
+}
 
 export async function createPublicBooking(data: {
     service_id: string
@@ -190,13 +242,15 @@ export async function createPublicBooking(data: {
     client_phone: string
     client_email?: string
     notes?: string
+    products?: { id: string; quantity: number }[]
+    redeem_points?: boolean
 }) {
     const supabase = await createClient()
 
-    // 1. Get service duration
+    // 1. Get service info
     const { data: service } = await supabase
         .from('services')
-        .select('duration')
+        .select('duration, name, price')
         .eq('id', data.service_id)
         .single()
 
@@ -244,7 +298,7 @@ export async function createPublicBooking(data: {
         return { error: 'Este horario ya está ocupado para el empleado seleccionado.' }
     }
 
-    // 5. Find a FREE cabin (not just the first one)
+    // 5. Find a FREE cabin
     const { data: allCabins } = await supabase
         .from('cabins')
         .select('id')
@@ -297,8 +351,8 @@ export async function createPublicBooking(data: {
         clientId = newClient?.id
     }
 
-    // 7. Create appointment (only allowed fields)
-    const { error: aptErr } = await supabase.from('appointments').insert({
+    // 7. Create appointment
+    const { data: newAppt, error: aptErr } = await supabase.from('appointments').insert({
         service_id: data.service_id,
         staff_id: data.staff_id,
         client_id: clientId,
@@ -307,9 +361,92 @@ export async function createPublicBooking(data: {
         end_time: endTime,
         status: 'pending',
         notes: data.notes ? `[ONLINE] ${data.notes}` : '[ONLINE]'
-    })
+    }).select('id').single()
 
     if (aptErr) return { error: `Error al crear cita: ${aptErr.message}` }
 
+    // 8. Handle products (upselling)
+    if (data.products && data.products.length > 0 && newAppt?.id) {
+        for (const prod of data.products) {
+            // Get product price
+            const { data: product } = await supabase
+                .from('inventory')
+                .select('price, stock_quantity')
+                .eq('id', prod.id)
+                .single()
+
+            if (product && product.stock_quantity >= prod.quantity) {
+                // Insert booking_product
+                await supabase.from('booking_products').insert({
+                    appointment_id: newAppt.id,
+                    product_id: prod.id,
+                    quantity: prod.quantity,
+                    unit_price: product.price
+                })
+                // Decrement stock
+                await supabase
+                    .from('inventory')
+                    .update({ stock_quantity: product.stock_quantity - prod.quantity })
+                    .eq('id', prod.id)
+            }
+        }
+    }
+
+    // 9. Handle loyalty redemption
+    if (data.redeem_points && clientId) {
+        const { data: client } = await supabase
+            .from('clients')
+            .select('loyalty_points')
+            .eq('id', clientId)
+            .single()
+
+        const { data: config } = await supabase
+            .from('loyalty_config')
+            .select('*')
+            .limit(1)
+            .single()
+
+        if (client && config && config.active && client.loyalty_points > 0) {
+            const points = client.loyalty_points
+            const discount = (points * Number(config.redemption_value)).toFixed(2)
+
+            await supabase.from('loyalty_transactions').insert({
+                client_id: clientId,
+                points: -points,
+                reason: `Canje online: -${points} pts = ${discount}€ descuento`,
+                appointment_id: newAppt?.id
+            })
+
+            await supabase
+                .from('clients')
+                .update({ loyalty_points: 0 })
+                .eq('id', clientId)
+        }
+    }
+
+    // 10. Get staff name for notification
+    const { data: staffProfile } = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('id', data.staff_id)
+        .single()
+
+    // 11. Create notification
+    await supabase.from('notifications').insert({
+        type: 'new_booking',
+        title: data.client_name,
+        message: `Nueva cita (${staffProfile?.name || 'Staff'})\n${data.date}, ${data.time}`,
+        metadata: {
+            appointment_id: newAppt?.id,
+            service_name: service?.name,
+            staff_name: staffProfile?.name,
+            date: data.date,
+            time: data.time,
+            products: data.products || [],
+            redeemed_points: data.redeem_points || false
+        }
+    })
+
     return { success: true }
 }
+

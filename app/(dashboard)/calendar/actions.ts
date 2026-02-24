@@ -219,6 +219,45 @@ export async function updateAppointmentStatus(id: string, status: string) {
         return { success: false, error: error.message }
     }
 
+    // On cancellation: notify staff + check waitlist
+    if (status === 'cancelled') {
+        try {
+            // Get appointment details for notification
+            const { data: appt } = await supabase
+                .from('appointments')
+                .select('*, clients(full_name), services(name), profiles!appointments_staff_id_fkey(name)')
+                .eq('id', id)
+                .single()
+
+            if (appt) {
+                const clientName = (appt as any).clients?.full_name || 'Cliente'
+                const serviceName = (appt as any).services?.name || 'Servicio'
+                const staffName = (appt as any).profiles?.name || ''
+                const dateStr = new Date(appt.start_time).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+                const timeStr = new Date(appt.start_time).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+
+                // Create cancellation notification
+                await supabase.from('notifications').insert({
+                    type: 'cancelled',
+                    title: `Cita cancelada: ${clientName}`,
+                    message: `${serviceName} (${staffName}) — ${dateStr}, ${timeStr}`,
+                    metadata: {
+                        appointment_id: id,
+                        client_name: clientName,
+                        service_name: serviceName,
+                        staff_name: staffName,
+                    }
+                })
+            }
+
+            // Check waitlist for matches
+            const { checkWaitlistOnCancellation } = await import('@/app/(dashboard)/clients/waitlist-actions')
+            await checkWaitlistOnCancellation(id)
+        } catch (e) {
+            console.error('Error in cancellation hooks:', e)
+        }
+    }
+
     return { success: true }
 }
 

@@ -1,15 +1,16 @@
 'use client'
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Plus, Edit2, Trash2, User, Mail, Shield, Palette } from "lucide-react"
+import { Plus, Edit2, Trash2, User, Mail, Shield, Palette, Camera } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { createStaffUser, updateStaffProfile, deleteStaffUser } from "../actions"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { createStaffUser, updateStaffProfile, deleteStaffUser, uploadStaffAvatar } from "../actions"
 
 interface StaffManagerProps {
     staff: any[]
@@ -20,6 +21,9 @@ export function StaffManager({ staff, onUpdate }: StaffManagerProps) {
     const [isAddOpen, setIsAddOpen] = useState(false)
     const [editingStaff, setEditingStaff] = useState<any>(null)
     const [isLoading, setIsLoading] = useState(false)
+    const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+    const [avatarFile, setAvatarFile] = useState<File | null>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
 
     // Form state
     const [formData, setFormData] = useState({
@@ -39,36 +43,59 @@ export function StaffManager({ staff, onUpdate }: StaffManagerProps) {
             color: '#3b82f6'
         })
         setEditingStaff(null)
+        setAvatarPreview(null)
+        setAvatarFile(null)
     }
 
     const openEdit = (staffMember: any) => {
         setEditingStaff(staffMember)
         setFormData({
-            email: staffMember.email || '', // Email might not be accessible directly in profile without join
-            password: '', // Can't edit password directly here usually
+            email: staffMember.email || '',
+            password: '',
             name: staffMember.name,
             role: staffMember.role,
             color: staffMember.color || '#3b82f6'
         })
+        setAvatarPreview(staffMember.avatar_url || null)
+        setAvatarFile(null)
         setIsAddOpen(true)
+    }
+
+    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (file) {
+            setAvatarFile(file)
+            const reader = new FileReader()
+            reader.onloadend = () => {
+                setAvatarPreview(reader.result as string)
+            }
+            reader.readAsDataURL(file)
+        }
     }
 
     const handleSubmit = async () => {
         setIsLoading(true)
         try {
             if (editingStaff) {
-                // Update
+                // Update profile
                 const res = await updateStaffProfile(editingStaff.id, {
                     name: formData.name,
                     role: formData.role,
                     color: formData.color
                 })
-                if (res.error) alert(res.error)
-                else {
-                    setIsAddOpen(false)
-                    onUpdate()
-                    resetForm()
+                if (res.error) { alert(res.error); return }
+
+                // Upload avatar if changed
+                if (avatarFile) {
+                    const fd = new FormData()
+                    fd.append('avatar', avatarFile)
+                    const avatarRes = await uploadStaffAvatar(editingStaff.id, fd)
+                    if (avatarRes.error) { alert(avatarRes.error); return }
                 }
+
+                setIsAddOpen(false)
+                onUpdate()
+                resetForm()
             } else {
                 // Create
                 const res = await createStaffUser({
@@ -78,12 +105,11 @@ export function StaffManager({ staff, onUpdate }: StaffManagerProps) {
                     role: formData.role,
                     color: formData.color
                 })
-                if (res.error) alert(res.error)
-                else {
-                    setIsAddOpen(false)
-                    onUpdate()
-                    resetForm()
-                }
+                if (res.error) { alert(res.error); return }
+
+                setIsAddOpen(false)
+                onUpdate()
+                resetForm()
             }
         } catch (e) {
             console.error(e)
@@ -122,6 +148,38 @@ export function StaffManager({ staff, onUpdate }: StaffManagerProps) {
                         </DialogHeader>
 
                         <div className="grid gap-4 py-4">
+                            {/* Avatar Upload (only for editing) */}
+                            {editingStaff && (
+                                <div className="flex flex-col items-center gap-3">
+                                    <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                                        <Avatar className="h-20 w-20 border-2 shadow-md" style={{ borderColor: formData.color }}>
+                                            <AvatarImage src={avatarPreview || undefined} alt={formData.name} />
+                                            <AvatarFallback className="text-xl font-bold" style={{ backgroundColor: formData.color, color: '#fff' }}>
+                                                {formData.name?.substring(0, 2).toUpperCase()}
+                                            </AvatarFallback>
+                                        </Avatar>
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <Camera className="h-6 w-6 text-white" />
+                                        </div>
+                                    </div>
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleAvatarChange}
+                                        className="hidden"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => fileInputRef.current?.click()}
+                                    >
+                                        <Camera className="mr-2 h-3 w-3" /> Cambiar Foto
+                                    </Button>
+                                </div>
+                            )}
+
                             {!editingStaff && (
                                 <>
                                     <div className="grid gap-2">
@@ -199,12 +257,15 @@ export function StaffManager({ staff, onUpdate }: StaffManagerProps) {
                     {staff.map((member) => (
                         <div key={member.id} className="flex items-center justify-between p-4 border rounded-lg bg-white hover:bg-slate-50 transition-colors">
                             <div className="flex items-center gap-4">
-                                <div
-                                    className="h-10 w-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm"
-                                    style={{ backgroundColor: member.color || '#94a3b8' }}
-                                >
-                                    {member.name?.substring(0, 2).toUpperCase()}
-                                </div>
+                                <Avatar className="h-10 w-10 border-2 shadow-sm" style={{ borderColor: member.color || '#94a3b8' }}>
+                                    <AvatarImage src={member.avatar_url} alt={member.name} />
+                                    <AvatarFallback
+                                        className="text-white font-bold text-sm"
+                                        style={{ backgroundColor: member.color || '#94a3b8' }}
+                                    >
+                                        {member.name?.substring(0, 2).toUpperCase()}
+                                    </AvatarFallback>
+                                </Avatar>
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <h3 className="font-semibold text-slate-900">{member.name}</h3>

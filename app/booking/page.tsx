@@ -1,14 +1,22 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { getPublicServices, getPublicStaff, getAvailableSlots, createPublicBooking } from './actions'
+import { useState, useEffect, useCallback } from 'react'
+import { getPublicServices, getPublicStaff, getAvailableSlots, createPublicBooking, getPublicProducts, getClientLoyaltyPublic } from './actions'
 
-// Steps: 1=Service, 2=Staff+Date, 3=Time, 4=Info, 5=Confirm
+// Steps: 1=Service, 2=Staff+Date, 3=Time, 4=Products, 5=Info, 6=Confirm
+
+interface Product {
+    id: string
+    name: string
+    price: number
+    stock_quantity: number
+}
 
 export default function BookingPage() {
     const [step, setStep] = useState(1)
     const [services, setServices] = useState<any[]>([])
     const [staff, setStaff] = useState<any[]>([])
+    const [products, setProducts] = useState<Product[]>([])
     const [loading, setLoading] = useState(true)
     const [slots, setSlots] = useState<string[]>([])
     const [slotsLoading, setSlotsLoading] = useState(false)
@@ -25,11 +33,20 @@ export default function BookingPage() {
     const [clientEmail, setClientEmail] = useState('')
     const [clientNotes, setClientNotes] = useState('')
 
+    // Products
+    const [selectedProducts, setSelectedProducts] = useState<Record<string, number>>({})
+
+    // Loyalty
+    const [loyaltyInfo, setLoyaltyInfo] = useState<any>(null)
+    const [loyaltyLoading, setLoyaltyLoading] = useState(false)
+    const [redeemPoints, setRedeemPoints] = useState(false)
+
     useEffect(() => {
         const load = async () => {
-            const [s, st] = await Promise.all([getPublicServices(), getPublicStaff()])
+            const [s, st, p] = await Promise.all([getPublicServices(), getPublicStaff(), getPublicProducts()])
             setServices(s)
             setStaff(st)
+            setProducts(p)
             setLoading(false)
         }
         load()
@@ -49,9 +66,49 @@ export default function BookingPage() {
         }
     }, [step])
 
+    // Check loyalty when phone changes
+    const checkLoyalty = useCallback(async (phone: string) => {
+        if (phone.length < 9) { setLoyaltyInfo(null); return }
+        setLoyaltyLoading(true)
+        const info = await getClientLoyaltyPublic(phone)
+        setLoyaltyInfo(info)
+        setLoyaltyLoading(false)
+    }, [])
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (clientPhone.length >= 9) checkLoyalty(clientPhone)
+        }, 600)
+        return () => clearTimeout(timer)
+    }, [clientPhone, checkLoyalty])
+
+    const updateProductQty = (productId: string, delta: number) => {
+        setSelectedProducts(prev => {
+            const current = prev[productId] || 0
+            const product = products.find(p => p.id === productId)
+            const maxStock = product?.stock_quantity || 0
+            const newQty = Math.max(0, Math.min(maxStock, current + delta))
+            if (newQty === 0) {
+                const { [productId]: _, ...rest } = prev
+                return rest
+            }
+            return { ...prev, [productId]: newQty }
+        })
+    }
+
+    const productsTotal = Object.entries(selectedProducts).reduce((sum, [id, qty]) => {
+        const product = products.find(p => p.id === id)
+        return sum + (product?.price || 0) * qty
+    }, 0)
+
     const handleSubmit = async () => {
         if (!selectedService || !selectedStaff || !selectedDate || !selectedTime || !clientName || !clientPhone) return
         setSubmitting(true)
+
+        const productList = Object.entries(selectedProducts)
+            .filter(([, qty]) => qty > 0)
+            .map(([id, quantity]) => ({ id, quantity }))
+
         const res = await createPublicBooking({
             service_id: selectedService.id,
             staff_id: selectedStaff.id,
@@ -60,14 +117,16 @@ export default function BookingPage() {
             client_name: clientName,
             client_phone: clientPhone,
             client_email: clientEmail || undefined,
-            notes: clientNotes || undefined
+            notes: clientNotes || undefined,
+            products: productList.length > 0 ? productList : undefined,
+            redeem_points: redeemPoints ? true : undefined,
         })
         setSubmitting(false)
         if (res.error) {
             alert(res.error)
         } else {
             setSuccess(true)
-            setStep(5)
+            setStep(6)
         }
     }
 
@@ -81,6 +140,8 @@ export default function BookingPage() {
         acc[cat].push(s)
         return acc
     }, {})
+
+    const grandTotal = (selectedService?.price || 0) + productsTotal - (redeemPoints && loyaltyInfo?.discount ? loyaltyInfo.discount : 0)
 
     if (loading) {
         return (
@@ -105,7 +166,7 @@ export default function BookingPage() {
                 {/* Progress Bar */}
                 {!success && (
                     <div style={styles.progressContainer}>
-                        {[1, 2, 3, 4].map(s => (
+                        {[1, 2, 3, 4, 5].map(s => (
                             <div key={s} style={{
                                 ...styles.progressStep,
                                 backgroundColor: s <= step ? '#8b5cf6' : '#e5e7eb',
@@ -115,7 +176,7 @@ export default function BookingPage() {
                             </div>
                         ))}
                         <div style={styles.progressLine}>
-                            <div style={{ ...styles.progressFill, width: `${((step - 1) / 3) * 100}%` }} />
+                            <div style={{ ...styles.progressFill, width: `${((step - 1) / 4) * 100}%` }} />
                         </div>
                     </div>
                 )}
@@ -245,52 +306,112 @@ export default function BookingPage() {
                     </div>
                 )}
 
-                {/* STEP 4: Client Info */}
+                {/* STEP 4: Products (Upselling) */}
                 {step === 4 && (
                     <div style={styles.stepContent}>
-                        <h2 style={styles.stepTitle}>4. Tus datos</h2>
+                        <h2 style={styles.stepTitle}>4. ¿Añadir algún producto?</h2>
+                        <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
+                            Productos para llevarte el día de tu cita. Paso opcional.
+                        </p>
+
+                        {products.length === 0 ? (
+                            <p style={{ textAlign: 'center', color: '#6b7280', padding: 16 }}>No hay productos disponibles.</p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {products.map(p => {
+                                    const qty = selectedProducts[p.id] || 0
+                                    return (
+                                        <div key={p.id} style={{
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                            padding: '12px 14px', borderRadius: 12, border: qty > 0 ? '2px solid #8b5cf6' : '2px solid #e5e7eb',
+                                            backgroundColor: qty > 0 ? '#f5f3ff' : '#fff', transition: 'all 0.2s'
+                                        }}>
+                                            <div>
+                                                <span style={{ fontWeight: 600, color: '#1f2937', fontSize: 14 }}>{p.name}</span>
+                                                <span style={{ fontWeight: 700, color: '#8b5cf6', marginLeft: 8, fontSize: 14 }}>{p.price}€</span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                {qty > 0 && (
+                                                    <button onClick={() => updateProductQty(p.id, -1)} style={styles.qtyBtn}>−</button>
+                                                )}
+                                                {qty > 0 && (
+                                                    <span style={{ fontWeight: 700, color: '#1f2937', minWidth: 20, textAlign: 'center' }}>{qty}</span>
+                                                )}
+                                                <button onClick={() => updateProductQty(p.id, 1)} style={styles.qtyBtn}>+</button>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
+
+                        {productsTotal > 0 && (
+                            <div style={{ marginTop: 16, padding: '10px 14px', backgroundColor: '#f5f3ff', borderRadius: 10, display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ color: '#6b7280', fontSize: 14 }}>Productos seleccionados:</span>
+                                <span style={{ fontWeight: 700, color: '#8b5cf6', fontSize: 16 }}>+{productsTotal.toFixed(2)}€</span>
+                            </div>
+                        )}
+
+                        <div style={styles.navBtns}>
+                            <button onClick={() => setStep(3)} style={styles.backBtn}>← Atrás</button>
+                            <button onClick={() => setStep(5)} style={styles.nextBtn}>
+                                {Object.keys(selectedProducts).length > 0 ? 'Siguiente →' : 'Saltar →'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* STEP 5: Client Info */}
+                {step === 5 && (
+                    <div style={styles.stepContent}>
+                        <h2 style={styles.stepTitle}>5. Tus datos</h2>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                             <div>
                                 <label style={styles.label}>Nombre completo *</label>
-                                <input
-                                    type="text"
-                                    value={clientName}
-                                    onChange={e => setClientName(e.target.value)}
-                                    placeholder="Tu nombre"
-                                    style={styles.input}
-                                />
+                                <input type="text" value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Tu nombre" style={styles.input} />
                             </div>
                             <div>
                                 <label style={styles.label}>Teléfono *</label>
-                                <input
-                                    type="tel"
-                                    value={clientPhone}
-                                    onChange={e => setClientPhone(e.target.value)}
-                                    placeholder="600 123 456"
-                                    style={styles.input}
-                                />
+                                <input type="tel" value={clientPhone} onChange={e => setClientPhone(e.target.value)} placeholder="600 123 456" style={styles.input} />
                             </div>
                             <div>
                                 <label style={styles.label}>Email (opcional)</label>
-                                <input
-                                    type="email"
-                                    value={clientEmail}
-                                    onChange={e => setClientEmail(e.target.value)}
-                                    placeholder="tu@email.com"
-                                    style={styles.input}
-                                />
+                                <input type="email" value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="tu@email.com" style={styles.input} />
                             </div>
                             <div>
                                 <label style={styles.label}>Notas (opcional)</label>
-                                <textarea
-                                    value={clientNotes}
-                                    onChange={e => setClientNotes(e.target.value)}
-                                    placeholder="Alergias, preferencias..."
-                                    style={{ ...styles.input, minHeight: 80, resize: 'vertical' as const }}
-                                />
+                                <textarea value={clientNotes} onChange={e => setClientNotes(e.target.value)} placeholder="Alergias, preferencias..." style={{ ...styles.input, minHeight: 80, resize: 'vertical' as const }} />
                             </div>
                         </div>
+
+                        {/* Loyalty banner */}
+                        {loyaltyLoading && (
+                            <div style={{ marginTop: 12, padding: 12, backgroundColor: '#f0fdf4', borderRadius: 10, textAlign: 'center', fontSize: 13, color: '#6b7280' }}>
+                                Comprobando puntos de fidelidad...
+                            </div>
+                        )}
+                        {loyaltyInfo?.found && loyaltyInfo.canRedeem && (
+                            <div style={{ marginTop: 12, padding: '14px 16px', backgroundColor: '#f0fdf4', borderRadius: 12, border: '1px solid #bbf7d0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div>
+                                        <span style={{ fontSize: 14, fontWeight: 600, color: '#166534' }}>🎁 ¡Hola {loyaltyInfo.clientName}!</span>
+                                        <p style={{ fontSize: 13, color: '#15803d', margin: '4px 0 0' }}>
+                                            Tienes <strong>{loyaltyInfo.points} puntos</strong> = <strong>{loyaltyInfo.discount.toFixed(2)}€</strong> de descuento
+                                        </p>
+                                    </div>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={redeemPoints}
+                                            onChange={e => setRedeemPoints(e.target.checked)}
+                                            style={{ width: 18, height: 18, accentColor: '#16a34a' }}
+                                        />
+                                        <span style={{ fontSize: 13, fontWeight: 600, color: '#166534' }}>Canjear</span>
+                                    </label>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Summary */}
                         <div style={styles.summary}>
@@ -300,12 +421,30 @@ export default function BookingPage() {
                                 <div>👤 {selectedStaff?.name}</div>
                                 <div>📅 {selectedDate}</div>
                                 <div>🕐 {selectedTime}</div>
-                                <div style={{ fontWeight: 700, color: '#8b5cf6', fontSize: 18, marginTop: 4 }}>{selectedService?.price}€</div>
+                                <div style={{ marginTop: 4 }}>
+                                    <span style={{ fontWeight: 600 }}>Servicio: </span>
+                                    <span>{selectedService?.price}€</span>
+                                </div>
+                                {productsTotal > 0 && (
+                                    <div>
+                                        <span style={{ fontWeight: 600 }}>Productos: </span>
+                                        <span>+{productsTotal.toFixed(2)}€</span>
+                                    </div>
+                                )}
+                                {redeemPoints && loyaltyInfo?.discount > 0 && (
+                                    <div style={{ color: '#16a34a' }}>
+                                        <span style={{ fontWeight: 600 }}>🎁 Descuento puntos: </span>
+                                        <span>-{loyaltyInfo.discount.toFixed(2)}€</span>
+                                    </div>
+                                )}
+                                <div style={{ fontWeight: 700, color: '#8b5cf6', fontSize: 20, marginTop: 8, borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
+                                    Total: {Math.max(0, grandTotal).toFixed(2)}€
+                                </div>
                             </div>
                         </div>
 
                         <div style={styles.navBtns}>
-                            <button onClick={() => setStep(3)} style={styles.backBtn}>← Atrás</button>
+                            <button onClick={() => setStep(4)} style={styles.backBtn}>← Atrás</button>
                             <button
                                 onClick={handleSubmit}
                                 disabled={!clientName || !clientPhone || submitting}
@@ -320,8 +459,8 @@ export default function BookingPage() {
                     </div>
                 )}
 
-                {/* STEP 5: Success */}
-                {step === 5 && success && (
+                {/* STEP 6: Success */}
+                {step === 6 && success && (
                     <div style={{ ...styles.stepContent, textAlign: 'center' as const }}>
                         <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
                         <h2 style={{ ...styles.stepTitle, color: '#059669' }}>¡Reserva confirmada!</h2>
@@ -333,7 +472,10 @@ export default function BookingPage() {
                             <div style={{ fontSize: 14, color: '#6b7280', lineHeight: 1.8 }}>
                                 <div>📋 {selectedService?.name}</div>
                                 <div>👤 {selectedStaff?.name}</div>
-                                <div>💰 {selectedService?.price}€</div>
+                                <div>💰 {Math.max(0, grandTotal).toFixed(2)}€</div>
+                                {redeemPoints && loyaltyInfo?.discount > 0 && (
+                                    <div style={{ color: '#16a34a', fontSize: 13 }}>🎁 Descuento de {loyaltyInfo.discount.toFixed(2)}€ aplicado</div>
+                                )}
                             </div>
                         </div>
 
@@ -352,6 +494,9 @@ export default function BookingPage() {
                                 setClientPhone('')
                                 setClientEmail('')
                                 setClientNotes('')
+                                setSelectedProducts({})
+                                setLoyaltyInfo(null)
+                                setRedeemPoints(false)
                                 setSuccess(false)
                             }}
                             style={{ ...styles.backBtn, marginTop: 16 }}
@@ -422,8 +567,8 @@ const styles: Record<string, React.CSSProperties> = {
     progressLine: {
         position: 'absolute' as const,
         top: '50%',
-        left: '15%',
-        right: '15%',
+        left: '12%',
+        right: '12%',
         height: 3,
         background: '#e5e7eb',
         transform: 'translateY(-50%)',
@@ -487,6 +632,20 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 14,
         fontWeight: 600,
         transition: 'all 0.15s',
+    },
+    qtyBtn: {
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        border: '1px solid #d1d5db',
+        background: '#fff',
+        cursor: 'pointer',
+        fontSize: 16,
+        fontWeight: 700,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#6b7280',
     },
     input: {
         width: '100%',

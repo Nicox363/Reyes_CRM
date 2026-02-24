@@ -192,28 +192,103 @@ export async function createStaffUser(data: any) {
 }
 
 export async function updateStaffProfile(id: string, data: any) {
-    const supabase = await createClient()
+    // Use service role to bypass RLS (profiles UPDATE policy only allows auth.uid() = id)
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!serviceRoleKey) return { error: 'Falta clave de servicio' }
 
-    // Verify Admin
-    // ... (omitted check for brevity, assuming RLS allows updates or we trust UI for now - but strictly should check)
-    // Ideally we repeat the admin check pattern:
+    const { createClient: createSupabaseClient } = require('@supabase/supabase-js')
+    const supabaseAdmin = createSupabaseClient(process.env.NEXT_PUBLIC_SUPABASE_URL, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false }
+    })
+
+    // Verify the requesting user is admin
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { error: 'No autorizado' }
-    // ...
 
-    const { error } = await supabase
+    const { data: profile } = await supabaseAdmin
         .from('profiles')
-        .update({
-            name: data.name,
-            role: data.role,
-            color: data.color
-        })
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+    if (profile?.role !== 'admin') return { error: 'Solo administradores pueden editar perfiles' }
+
+    const updateData: any = {
+        name: data.name,
+        role: data.role,
+        color: data.color
+    }
+    if (data.avatar_url !== undefined) {
+        updateData.avatar_url = data.avatar_url
+    }
+
+    const { error } = await supabaseAdmin
+        .from('profiles')
+        .update(updateData)
         .eq('id', id)
 
     if (error) return { error: error.message }
 
     revalidatePath('/schedule')
+    revalidatePath('/calendar')
     return { success: true }
+}
+
+export async function uploadStaffAvatar(staffId: string, formData: FormData) {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!serviceRoleKey) return { error: 'Falta clave de servicio' }
+
+    const { createClient: createSupabaseClient } = require('@supabase/supabase-js')
+    const supabaseAdmin = createSupabaseClient(process.env.NEXT_PUBLIC_SUPABASE_URL, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false }
+    })
+
+    // Verify admin
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'No autorizado' }
+
+    const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+    if (profile?.role !== 'admin') return { error: 'Solo administradores' }
+
+    const file = formData.get('avatar') as File
+    if (!file) return { error: 'No se proporcionó archivo' }
+
+    const ext = file.name.split('.').pop()
+    const fileName = `${staffId}.${ext}`
+
+    // Upload to storage (overwrite if exists)
+    const { error: uploadError } = await supabaseAdmin.storage
+        .from('avatars')
+        .upload(fileName, file, { upsert: true, contentType: file.type })
+
+    if (uploadError) {
+        console.error('Upload error:', uploadError)
+        return { error: 'Error al subir foto: ' + uploadError.message }
+    }
+
+    // Get public URL
+    const { data: urlData } = supabaseAdmin.storage
+        .from('avatars')
+        .getPublicUrl(fileName)
+
+    // Update profile
+    const { error: updateError } = await supabaseAdmin
+        .from('profiles')
+        .update({ avatar_url: urlData.publicUrl })
+        .eq('id', staffId)
+
+    if (updateError) return { error: 'Error actualizando perfil: ' + updateError.message }
+
+    revalidatePath('/schedule')
+    revalidatePath('/calendar')
+    return { success: true, url: urlData.publicUrl }
 }
 
 export async function deleteStaffUser(id: string) {

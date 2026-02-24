@@ -79,7 +79,7 @@ export default function SchedulePage() {
                         // Admin: Fetch all staff
                         const { data: allStaff, error: staffError } = await supabase
                             .from('profiles')
-                            .select('id, name, role, color')
+                            .select('id, name, role, color, avatar_url')
                             .order('name')
 
                         currentStaffList = allStaff || []
@@ -330,6 +330,7 @@ export default function SchedulePage() {
                                                 {/* Staff Info Column */}
                                                 <div className="p-3 flex items-center gap-3 border-r bg-white sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                                     <Avatar className="h-10 w-10 border-2 border-white shadow-sm" style={{ borderColor: staff.color }}>
+                                                        <AvatarImage src={staff.avatar_url} alt={staff.name} />
                                                         <AvatarFallback className="text-xs">{staff.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                                                     </Avatar>
                                                     <div className="overflow-hidden">

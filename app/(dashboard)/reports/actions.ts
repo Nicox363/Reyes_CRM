@@ -33,15 +33,16 @@ export async function getStaffSalesPerformance(startDate?: Date, endDate?: Date)
     if (aptError) console.error("Error fetching staff report appointments:", aptError)
 
     // 2. Fetch Product Transactions (Product Revenue)
-    // Attributed to: created_by (Who processed the sale)
-    // Note: We use 'created_by' as a proxy for the seller for Retail Products.
+    // Attributed to: staff_id (Who was selected as the seller in TPV)
+    // Fallback to: created_by (for older transactions before staff_id was added)
     const { data: transactions, error: txnError } = await supabase
         .from('transactions')
         .select(`
             id,
             amount,
             concept,
-            staff:profiles!created_by(id, name)
+            seller:profiles!staff_id(id, name),
+            creator:profiles!created_by(id, name)
         `)
         .gte('date', start)
         .lte('date', end)
@@ -99,16 +100,21 @@ export async function getStaffSalesPerformance(startDate?: Date, endDate?: Date)
 
     // Process Products (Filter transactions that look like products)
     transactions?.forEach(txn => {
-        // Simple heuristic: If concept starts with "Producto:" or checking logic
-        // Ideally we should have a 'type' column, but we use concept string for now as per schema
         const isProduct = txn.concept?.toLowerCase().startsWith('producto') ||
-            txn.concept?.toLowerCase().includes('(x') // check for quantity marker e.g. (x2)
+            txn.concept?.toLowerCase().includes('(x') ||
+            txn.concept?.toLowerCase().startsWith('venta productos')
 
         if (isProduct) {
+            // Prefer seller (staff_id) over creator (created_by) for attribution
             // @ts-ignore
-            const staffId = txn.staff?.id || 'unknown'
+            const rawSeller = txn.seller
             // @ts-ignore
-            const staffName = txn.staff?.name || 'Sistema'
+            const rawCreator = txn.creator
+            const seller = Array.isArray(rawSeller) ? rawSeller[0] : rawSeller
+            const creator = Array.isArray(rawCreator) ? rawCreator[0] : rawCreator
+            const staff = seller || creator
+            const staffId = staff?.id || 'unknown'
+            const staffName = staff?.name || 'Sistema'
 
             const entry = getEntry(staffId, staffName)
             const amount = Number(txn.amount)
@@ -205,6 +211,8 @@ export async function getTopSellingProducts(startDate?: Date, endDate?: Date) {
 
     transactions.forEach(t => {
         const concept = t.concept || ''
+
+        // Format 1: "Producto: Name (x2)" — single product
         if (concept.startsWith('Producto:')) {
             let name = concept.replace('Producto:', '').trim()
             let quantity = 1
@@ -217,10 +225,42 @@ export async function getTopSellingProducts(startDate?: Date, endDate?: Date) {
             if (!productStats.has(name)) {
                 productStats.set(name, { name, quantity: 0, revenue: 0 })
             }
-
             const entry = productStats.get(name)!
             entry.quantity += quantity
             entry.revenue += Number(t.amount)
+        }
+        // Format 2: "Venta Productos: Name (x1), Name (x2)" — multi-product TPV sale
+        else if (concept.startsWith('Venta Productos:')) {
+            const itemsStr = concept.replace('Venta Productos:', '').trim()
+            const items = itemsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
+            const totalAmount = Number(t.amount)
+
+            // Parse each item to get name and quantity
+            const parsedItems: { name: string, quantity: number }[] = []
+            let totalQty = 0
+
+            items.forEach((item: string) => {
+                let name = item
+                let quantity = 1
+                const qtyMatch = name.match(/\(x(\d+)\)$/)
+                if (qtyMatch) {
+                    quantity = parseInt(qtyMatch[1])
+                    name = name.replace(qtyMatch[0], '').trim()
+                }
+                parsedItems.push({ name, quantity })
+                totalQty += quantity
+            })
+
+            // Distribute total amount proportionally (best-effort since we don't have individual prices in this format)
+            // Each item gets a share based on quantity
+            parsedItems.forEach(({ name, quantity }) => {
+                if (!productStats.has(name)) {
+                    productStats.set(name, { name, quantity: 0, revenue: 0 })
+                }
+                const entry = productStats.get(name)!
+                entry.quantity += quantity
+                entry.revenue += totalQty > 0 ? (totalAmount * quantity / totalQty) : 0
+            })
         }
     })
 
